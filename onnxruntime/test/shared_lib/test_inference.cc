@@ -182,6 +182,7 @@ static constexpr PATH_TYPE VARIED_INPUT_CUSTOM_OP_MODEL_URI_2 = TSTR("testdata/f
 static constexpr PATH_TYPE OPTIONAL_INPUT_OUTPUT_CUSTOM_OP_MODEL_URI = TSTR("testdata/foo_bar_1.onnx");
 static constexpr PATH_TYPE OPTIONAL_INPUT_OUTPUT_CUSTOM_OP_MODEL_URI_2 = TSTR("testdata/foo_bar_2.onnx");
 static constexpr PATH_TYPE CUSTOM_OP_MODEL_WITH_ATTRIBUTES_URI = TSTR("testdata/foo_bar_3.onnx");
+static constexpr PATH_TYPE OPTIONAL_TYPE_GH_11717_MODEL = TSTR("testdata/gh_issue_11717.onnx");
 #if !defined(DISABLE_SPARSE_TENSORS)
 static constexpr PATH_TYPE SPARSE_OUTPUT_MODEL_URI = TSTR("testdata/sparse_initializer_as_output.onnx");
 #ifndef DISABLE_CONTRIB_OPS
@@ -408,7 +409,7 @@ TEST(CApiTest, custom_op_handler) {
 
 #if !defined(ORT_MINIMAL_BUILD) && !defined(REDUCED_OPS_BUILD)
 // disable test in reduced-op-build since TOPK and GRU are excluded there
-TEST(CApiTest, instant_op_handler) {
+TEST(CApiTest, standalone_op_handler) {
   std::vector<Input> inputs(1);
   Input& input = inputs[0];
   input.name = "X";
@@ -418,12 +419,20 @@ TEST(CApiTest, instant_op_handler) {
   std::vector<int64_t> expected_dims_y = {3, 2};
   std::vector<float> expected_values_y = {2.0f, 4.0f, 6.0f, 8.0f, 10.0f, 12.0f};
 
-  InstantCustomOp instant_op{onnxruntime::kCpuExecutionProvider, nullptr};
-  Ort::CustomOpDomain custom_op_domain("");
-  custom_op_domain.Add(&instant_op);
+#ifdef USE_CUDA
+  StandaloneCustomOp standalone_op{onnxruntime::kCudaExecutionProvider, nullptr};
+#else
+  StandaloneCustomOp standalone_op{onnxruntime::kCpuExecutionProvider, nullptr};
+#endif
 
-  TestInference<float>(*ort_env, CUSTOM_OP_MODEL_URI, inputs, "Y", expected_dims_y, expected_values_y, 0,
-                       custom_op_domain, nullptr);
+  Ort::CustomOpDomain custom_op_domain("");
+  custom_op_domain.Add(&standalone_op);
+
+#ifdef USE_CUDA
+  TestInference<float>(*ort_env, CUSTOM_OP_MODEL_URI, inputs, "Y", expected_dims_y, expected_values_y, 1, custom_op_domain, nullptr);
+#else
+  TestInference<float>(*ort_env, CUSTOM_OP_MODEL_URI, inputs, "Y", expected_dims_y, expected_values_y, 0, custom_op_domain, nullptr);
+#endif
 }
 #endif
 
@@ -2155,4 +2164,15 @@ TEST(CApiTest, TestCudaMemcpyToHostWithSequenceTensors) {
   // model runs without crashing
 }
 
+#endif
+
+// Reduced Ops build doesn't support OptionalHasElement (16) yet
+#if !defined(REDUCED_OPS_BUILD) && !defined(DISABLE_OPTIONAL_TYPE)
+TEST(CApiTest, GH_11717) {
+  const auto* model_path = OPTIONAL_TYPE_GH_11717_MODEL;
+  Ort::SessionOptions session_options{};
+  // Just check if the model loads fine without a segmentation fault
+  // in the default CPU EP
+  EXPECT_NO_THROW(Ort::Session session(*ort_env, model_path, session_options));
+}
 #endif
